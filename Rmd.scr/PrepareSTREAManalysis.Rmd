@@ -1,0 +1,115 @@
+---
+title: "Prepare STREAM analysis"
+author: "Babacar NDAO"
+date: "11/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+## -----------------------------------------------------------------------------
+## Libraries
+## -----------------------------------------------------------------------------
+
+suppressMessages(library(Seurat))
+suppressMessages(library(RColorBrewer))
+suppressMessages(library(readxl))
+suppressMessages(library(stringr))
+suppressMessages(library(getopt))
+suppressMessages(library(scales))
+
+## -----------------------------------------------------------------------------
+## Command line args
+## -----------------------------------------------------------------------------
+
+spec = matrix(c(
+  'help',        'h', 0, "logical",   "Help about the program",
+  'inputRDS',  'i', 1, "character", "REQUIRED : 10X data prepared as monocle or seurat object.",
+  'outdir',     'o',1, "character", 'Outdir path (default ./)',
+  "prefix", "p", 1, "character", "Prefix for the output file",
+  "downSample", "d", 1,"numeric", "subsample the dataset with the given number of cells",
+  "removeCluster", "r", 1, "character", "remove cell for the given cluster (need allData)",
+  "subsetTreatment", "s", 1, "character", "subset cell for the given treatment (need allData)"
+), byrow=TRUE, ncol=5)
+
+opt = getopt(spec)
+
+## ---------------------------------------------------------------------
+## Paths
+## ---------------------------------------------------------------------
+
+inputRDS = "/shared/projects/scrna_gmp_rara/stage_babacar/scranseq/analysis/output/RNA/Intagration_analysis/seurat_annotated.rds"
+outdir = "/shared/projects/scrna_gmp_rara/stage_babacar/scranseq/analysis/output/RNA/prepareSTREAM"
+
+dir.create(outdir, recursive = T)
+
+prefix <- "All"
+
+print(prefix)
+
+## ---------------------------------------------------------------------
+## Color scheme
+## ---------------------------------------------------------------------
+
+colorTreatment <- c("#664CFF", "#FF8000")
+colorCluster <- c("#E69F00", "#CC79A7", "#0072B2", "#009E73", "#D55E00", "#56B4E9", "#FF0000")
+colorPhases <- c(brewer.pal(9,"RdPu"))[c(3,6,9)]
+# colorBranches <- c("#332288", "#117733", "#DDCC77", "#AA4499", "#88CCEE")
+
+seurat <- readRDS(inputRDS)
+seurat$cellName <- rownames(seurat@meta.data)
+#Set integrated slot as active assay
+DefaultAssay(seurat) <- "integrated"
+
+colorClusters <- cbind(levels(seurat$FinalCluster),
+                       colorCluster)
+
+if (!is.null(opt$removeCluster)) {
+  seurat = subset(seurat, idents = opt$removeCluster,invert = TRUE)
+  colorClusters = colorClusters[!colorClusters[,1] %in% opt$removeCluster,]
+}
+
+
+conditionColors <- cbind(c("Ctrl","RA"),colorTreatment)
+
+phasesColors <- cbind(levels(seurat$phases), colorPhases)
+
+if (!is.null(opt$subsetTreatment)) {
+  Idents(seurat) <- "sampleName"
+  
+  seurat = subset(seurat, idents = opt$subsetTreatment)
+  conditionColors = conditionColors[which(conditionColors[,1]!=opt$subsetTreatment),]
+  Idents(seurat) <- "FinalCluster"
+  
+}
+
+if (!is.null(opt$downSample)) {
+  seurat = subset(seurat, cells = sample(Cells(seurat), opt$downSample),random.seed = 2020)
+}
+
+# Extract integrated matrix 
+data <- GetAssayData(object = seurat, slot = "scale.data")
+data <- data[,rownames(seurat@meta.data)]
+
+write.table(data,paste(outdir,"/",prefix,"_scaleDataForStream.tsv",sep = ""),quote = FALSE, sep = "\t",col.names = T)
+
+# Write cluster annotation for each cells
+write.table(seurat@meta.data[,c("cellName", "FinalCluster")],paste(outdir,"/",prefix,"_seuratClusters.tsv",sep = ""),quote = FALSE,sep = "\t",col.names = FALSE,row.names = F)
+# Write color associated to each cluster
+write.table(colorClusters,paste(outdir,"/",prefix,"_colorClusters.tsv",sep =""),quote = FALSE,sep = "\t",col.names = FALSE,row.names = F)
+
+# Write condition annot 
+write.table(seurat$sampleName,paste(outdir,"/",prefix,"_treatment.tsv",sep =""),quote = FALSE,sep = "\t",col.names = FALSE)
+# Write color associated to the condition
+write.table(conditionColors,paste(outdir,"/",prefix,"_colorTreatment.tsv",sep =""),quote = FALSE,sep = "\t",col.names = FALSE,row.names = F)
+
+# Write phases annot
+write.table(seurat$phases,paste(outdir,"/",prefix,"_cellCyclePhases.tsv",sep =""),quote = FALSE,sep = "\t",col.names = FALSE)
+# Write color assosciated to phases
+write.table(phasesColors,paste(outdir,"/",prefix,"_colorCellCyclePhases.tsv",sep =""),quote = FALSE,sep = "\t",col.names = FALSE,row.names = F)
+
+```
+

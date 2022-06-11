@@ -185,23 +185,23 @@ Idents(seurat) <- "predicted.id"
 UMAP_control <- DimPlot(seurat_control, split.by = "sampleName", group.by = "sampleName", pt.size = 0.4, cols = colorTreatment[1]) + theme(axis.title = element_blank(), axis.text = element_blank(), legend.position = "none")
 UMAP_treated <- DimPlot(seurat_treated, split.by = "sampleName", group.by = "sampleName", pt.size = 0.4, cols = colorTreatment[2]) + theme(axis.title = element_blank(), axis.text = element_blank(), legend.position = "none")
 
-UMAP_CellCycle <- DimPlot(seurat, pt.size = 0.4, cols = colorPhases, group.by = "phases") + theme(axis.title = element_blank(), axis.text = element_blank())
-UMAP_CellCycle_split <- DimPlot(seurat, split.by = "sampleName", group.by = "phases", pt.size = 0.4, cols = colorPhases) + theme(axis.title = element_blank(), axis.text = element_blank())
+UMAP_CellCycle <- DimPlot(seurat, pt.size = 0.4, cols = colorPhases, group.by = "phases") + theme(axis.title = element_blank(), axis.text = element_blank()) 
+UMAP_CellCycle_split <- DimPlot(seurat, split.by = "sampleName", group.by = "phases", pt.size = 0.4, cols = colorPhases) + theme(axis.title = element_blank(), axis.text = element_blank()) 
 
-#ggsave(paste0(outdir,"UMAP/", 'UMAP_CellCycle', '.png'), plot = UMAP_CellCycle, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 15, units = 'cm', dpi = 300)
+ggsave(paste0(outdir,"UMAP/", 'UMAP_CellCycle', '.png'), plot = UMAP_CellCycle, device = 'png', path = NULL,
+       scale = 1, width = 15, height = 15, units = 'cm', dpi = 300)
 
-#ggsave(paste0(outdir,"UMAP/", 'UMAP_split_CellCycle', '.png'), plot = UMAP_CellCycle_split, device = 'png', path = NULL,
-       #scale = 1, width = 20, height = 15, units = 'cm', dpi = 300)
+ggsave(paste0(outdir,"UMAP/", 'UMAP_split_CellCycle', '.png'), plot = UMAP_CellCycle_split, device = 'png', path = NULL,
+       scale = 1, width = 20, height = 15, units = 'cm', dpi = 300)
 #ggsave(paste0(outdir,"UMAP/", 'UMAP_cluster', '.png'), plot = UMAP_Clust, device = 'png', path = NULL,
        #scale = 1, width = 15, height = 15, units = 'cm', dpi = 300)
 
-#ggsave(paste0(outdir, "UMAP/", 'UMAP_split_treatment', '.png'), plot = UMAP_treatment, device = 'png', path = NULL,
-       #scale = 1, width = 20, height = 15, units = 'cm', dpi = 300)
-#ggsave(paste0(outdir, "UMAP/", 'UMAP_treatment_Control', '.png'), plot = UMAP_control, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 15, units = 'cm', dpi = 300)
-#ggsave(paste0(outdir, "UMAP/", 'UMAP_treatment_Treated', '.png'), plot = UMAP_treated, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 15, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "UMAP/", 'UMAP_split_treatment', '.png'), plot = UMAP_treatment, device = 'png', path = NULL,
+       scale = 1, width = 20, height = 15, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "UMAP/", 'UMAP_treatment_Control', '.png'), plot = UMAP_control, device = 'png', path = NULL,
+       scale = 1, width = 15, height = 15, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "UMAP/", 'UMAP_treatment_Treated', '.png'), plot = UMAP_treated, device = 'png', path = NULL,
+       scale = 1, width = 15, height = 15, units = 'cm', dpi = 300)
 
 UMAP_CellCycle
 UMAP_Clust
@@ -223,14 +223,14 @@ bp_phasesClust_control <- ggplot(data.frame(summary_phases[summary_phases$sample
   geom_bar( stat="identity", position="fill")+
   scale_fill_manual( values= colorPhases)+
   scale_y_continuous(name = "Sample (%)", labels = c(0,25,50,75,100))+
-  ylab(label = "")+xlab(label = "") + coord_flip()+
+  ylab(label = "")+xlab(label = "") + coord_flip() + theme_classic()
   theme(legend.title=element_blank()) + ggtitle("Control")
 
 bp_phasesClust_treated <- ggplot(data.frame(summary_phases[summary_phases$sampleName %in% "RNA_RA",]), aes(fill = phases,y = V1, x=predicted.id)) +
   geom_bar( stat="identity", position="fill")+
   scale_fill_manual( values= colorPhases)+
   scale_y_continuous(name = "Sample (%)", labels = c(0,25,50,75,100))+
-  ylab(label = "")+xlab(label = "") + coord_flip()+
+  ylab(label = "")+xlab(label = "") + coord_flip() + theme_classic()
   theme(legend.title=element_blank()) + ggtitle("Treated")
 
 cellCycle_legend <- get_legend(bp_phasesClust_treated)
@@ -239,8 +239,8 @@ bp_grid_cellCycle <- plot_grid(bp_phasesClust_control + theme(legend.position = 
 bp_cellCycle_leg_grid <- plot_grid(bp_grid_cellCycle, cellCycle_legend,  rel_widths = c(3,0.4))
 
 bp_cellCycle_leg_grid
-#ggsave(paste0(outdir, "BarPlot/", 'BP_cellCycle_split', '.png'), plot = bp_cellCycle_leg_grid, device = 'png', path = NULL,
-       #scale = 1, width = 20, height = 20, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "BarPlot/", 'BP_cellCycle_split', '.png'), plot = bp_cellCycle_leg_grid, device = 'png', path = NULL,
+       scale = 1, width = 20, height = 20, units = 'cm', dpi = 300)
 
 CellPerClust <- ddply(seurat@meta.data,~predicted.id + sampleName, nrow)
 
@@ -252,10 +252,10 @@ bp_rawCellCount_treated <- ggplot(data.frame(CellPerClust[CellPerClust$sampleNam
 bp_rawCellCount_control
 bp_rawCellCount_treated
 
-#ggsave(paste0(outdir, "BarPlot/", 'BP_raw_cellCount_control', '.png'), plot = bp_rawCellCount_control, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
-#ggsave(paste0(outdir, "BarPlot/", 'BP_raw_cellCount_treated', '.png'), plot = bp_rawCellCount_treated, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "BarPlot/", 'BP_raw_cellCount_control', '.png'), plot = bp_rawCellCount_control, device = 'png', path = NULL,
+       scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "BarPlot/", 'BP_raw_cellCount_treated', '.png'), plot = bp_rawCellCount_treated, device = 'png', path = NULL,
+       scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
 
 bp_control_raw_cycle <- plot_grid(bp_phasesClust_control + theme(legend.position = "none"), bp_rawCellCount_control + theme(axis.title.y = element_blank(), axis.text.y = element_blank()) + ggtitle(" "), rel_widths = c(2,1))
 bp_treated_raw_cycle <- plot_grid(bp_phasesClust_treated + theme(legend.position = "none"), bp_rawCellCount_treated + theme(axis.title.y = element_blank(), axis.text.y = element_blank()) + ggtitle(" "), rel_widths = c(2,1))
@@ -264,8 +264,8 @@ bp_all_grid_noleg <- plot_grid(bp_control_raw_cycle, bp_treated_raw_cycle, nrow 
 bp_all_grid_leg <- plot_grid(bp_all_grid_noleg, cellCycle_legend, rel_widths = c(3,0.4))
 
 bp_treated_raw_cycle
-#ggsave(paste0(outdir, "BarPlot/", 'BP_grid_cellCycle_cellCount', '.png'), plot = bp_treated_raw_cycle, device = 'png', path = NULL,
-       #scale = 1, width = 20, height = 20, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "BarPlot/", 'BP_grid_cellCycle_cellCount', '.png'), plot = bp_treated_raw_cycle, device = 'png', path = NULL,
+       scale = 1, width = 20, height = 20, units = 'cm', dpi = 300)
 
 # BP proportion treatment per cluster
 clustersampleName <- ddply(seurat@meta.data,~predicted.id + sampleName,nrow)
@@ -276,7 +276,6 @@ enrich_clust <- getEnrichPopClust(hspc.combined = seurat, Xname = "RNA_Ctrl", Yn
 
 
 clustersampleName$sampleName <- factor(clustersampleName$sampleName, levels = c("RNA_RA", "RNA_Ctrl"))
-clustersampleName$condition <- factor(clustersampleName$sampleName, levels = c("RNA_Ctrl", "RNA_RA"))
 
 bp_treatmentClust1 <- ggplot(data.frame(clustersampleName), aes(fill = sampleName,y = V1, x=predicted.id)) +
   geom_bar( stat="identity", position="fill")+
@@ -287,11 +286,12 @@ bp_treatmentClust1 <- ggplot(data.frame(clustersampleName), aes(fill = sampleNam
   geom_hline(yintercept = propExpect[1])
 
 bp_treatmentClust1
-#ggsave(paste0(outdir, "BarPlot/",'BP_treatment_fill', '.png'), plot = bp_treatmentClust1, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "BarPlot/",'BP_treatment_fill', '.png'), plot = bp_treatmentClust1, device = 'png', path = NULL,
+       scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
 
+clustersampleName$sampleName <- factor(clustersampleName$sampleName, levels = c("RNA_Ctrl", "RNA_RA"))
 
-bp_treatmentClust2 <- ggplot(data.frame(clustersampleName), aes(fill = condition,y = V1, x=predicted.id)) +
+bp_treatmentClust2 <- ggplot(data.frame(clustersampleName), aes(fill = sampleName,y = V1, x=predicted.id)) +
   #geom_bar( stat="identity", position="fill")+
   geom_bar( stat="identity", position = position_dodge2())+
   scale_fill_manual( values= colorTreatment)+
@@ -301,8 +301,8 @@ bp_treatmentClust2 <- ggplot(data.frame(clustersampleName), aes(fill = condition
   #geom_hline(yintercept = propExpect[1])
 
 bp_treatmentClust2
-#ggsave(paste0(outdir, "BarPlot/",'BP_treatment_position_dodge', '.png'), plot = bp_treatmentClust2, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "BarPlot/",'BP_treatment_position_dodge', '.png'), plot = bp_treatmentClust2, device = 'png', path = NULL,
+       scale = 1, width = 30, height = 20, units = 'cm', dpi = 300)
 
 # BP cell number distribution per cluster 
 CellPerClust <- ddply(seurat@meta.data,~predicted.id, nrow)
@@ -311,8 +311,8 @@ bp_rawTreatmentClust <- ggplot(data.frame(CellPerClust), aes(y = V1, x=predicted
   geom_bar( stat="identity") + theme_classic() + coord_flip() + ylab("nCells") + xlab("")
 
 bp_rawTreatmentClust
-#ggsave(paste0(outdir, "BarPlot/",'BP_raw_treatment', '.png'), plot = bp_rawTreatmentClust, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "BarPlot/",'BP_raw_treatment', '.png'), plot = bp_rawTreatmentClust, device = 'png', path = NULL,
+       scale = 1, width = 30, height = 20, units = 'cm', dpi = 300)
 
 # Arranging BP grid
 treatment_legend <- get_legend(bp_treatmentClust2)
@@ -324,8 +324,8 @@ bp_grid1 <- plot_grid(bp_treatmentClust1 + theme(legend.position = "none", axis.
                      treatment_legend, rel_widths = c(2,2,0.5), nrow = 1)
 
 bp_grid1
-#ggsave(paste0(outdir, "BarPlot/",'BP_grid1_treatment_dodge', '.png'), plot = bp_grid1, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "BarPlot/",'BP_grid1_treatment_dodge', '.png'), plot = bp_grid1, device = 'png', path = NULL,
+       scale = 1, width = 30, height = 20, units = 'cm', dpi = 600)
 
 
 bp_grid2 <- plot_grid(bp_treatmentClust1 + theme(legend.position = "none", axis.line.y = element_blank(), 
@@ -336,8 +336,8 @@ bp_grid2 <- plot_grid(bp_treatmentClust1 + theme(legend.position = "none", axis.
                      treatment_legend, rel_widths = c(2,1,0.5), nrow = 1)
 
 bp_grid2
-#ggsave(paste0(outdir, "BarPlot/",'BP_grid2_treatment_dodge', '.png'), plot = bp_grid2, device = 'png', path = NULL,
-       #scale = 1, width = 15, height = 20, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, "BarPlot/",'BP_grid2_treatment_dodge', '.png'), plot = bp_grid2, device = 'png', path = NULL,
+       scale = 1, width = 30, height = 20, units = 'cm', dpi = 300)
 ```
 
 ## results saving

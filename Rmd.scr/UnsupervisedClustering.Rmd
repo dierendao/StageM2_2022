@@ -1,0 +1,187 @@
+---
+title: "Unsupervise Clustering"
+author: "Babacar NDAO"
+date: "01/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Unsupervised Clustering
+
+
+## -----------------------------------------------------------------------------
+## Libraries
+## -----------------------------------------------------------------------------
+
+```{r}
+suppressMessages(library(Seurat))
+suppressMessages(library(ggplot2))
+suppressMessages(library(ggpubr))
+suppressMessages(library(plyr))
+suppressMessages(library(dplyr))
+suppressMessages(library(stringr))
+library(cowplot)
+library(ggplot2)
+library(RColorBrewer)
+library(scales)
+library(gProfileR)
+library(biomaRt)
+library(getopt)
+```
+
+
+## -----------------------------------------------------------------------------
+## Load function
+## -----------------------------------------------------------------------------
+
+```{r}
+source("/shared/projects/scrna_gmp_rara/stage_babacar/scranseq/analysis/R_src/funForSeuratAnalysis.R")
+```
+
+
+## Paths and command options
+
+```{r}
+inputNew = "/shared/projects/scrna_gmp_rara/stage_babacar/scranseq/analysis/output/RNA/Seurat4_integration/combined.rds"
+outdir = "/shared/projects/scrna_gmp_rara/stage_babacar/scranseq/analysis/output/RNA/IntegrationAnalysis/"
+resolution <- "integrated_snn_res.0.3"
+assay <- "RNA"
+clustName <- "Cl1+Cl2+Cl3+Cl4+Cl5+Cl6+Cl7"
+logfc_threshold <- 0.25
+pval <- 0.05
+```
+
+
+## Data reading
+
+```{r}
+
+integrated = readRDS(inputNew)
+DefaultAssay(integrated) = assay
+Idents(integrated) = resolution
+
+# Prepare cluster name
+clustName <- strsplit(clustName, split = "\\+")[[1]]
+
+theme_set(theme_classic())
+dir.create(outdir, recursive = T)
+```
+
+
+## ---------------------------------------------------------------------
+## Color scheme
+## ---------------------------------------------------------------------
+
+```{r}
+colorTreatment <- c("#664CFF", "#FF8000")
+colorCluster <- c("#E69F00", "#CC79A7", "#0072B2", "#009E73", "#D55E00", "#56B4E9", "#FF0000")
+colorPhases <- c(brewer.pal(9,"RdPu"))[c(3,6,9)]
+colorBranches <- c("#332288", "#117733", "#DDCC77", "#AA4499", "#88CCEE")
+```
+
+
+##-------------------------------------------------#
+##       Data preparation : Clust name etc
+##-------------------------------------------------#
+
+
+```{r}
+# Transform  cluster names as levels
+names(clustName) = levels(integrated)
+integrated = RenameIdents(integrated, clustName)
+integrated@meta.data$FinalCluster = Idents(integrated)
+integrated@meta.data$FinalCluster = factor(integrated@meta.data$FinalCluster, levels = c("Cl1", "Cl2", "Cl3", "Cl4", "Cl5", "Cl6", "Cl7"))
+Idents(integrated) = "FinalCluster"
+
+# add Treatment_clust as metadata
+integrated$Treatment_clust = paste(integrated$FinalCluster, integrated$sampleName, sep = "_")
+integrated$Treatment_clust = factor(integrated$Treatment_clust, levels = c("Cl1_RNA_Ctrl", "Cl1_RNA_RA", "Cl2_RNA_Ctrl", "Cl2_RNA_RA", "Cl3_RNA_Ctrl", "Cl3_RNA_RA", "Cl4_RNA_Ctrl", "Cl4_RNA_RA", "Cl5_RNA_Ctrl", "Cl5_RNA_RA", "Cl6_RNA_Ctrl", "Cl6_RNA_RA", "Cl7_RNA_Ctrl", "Cl7_RNA_RA")) 
+
+
+# plot labels 
+p1 <- DimPlot(integrated, group.by = "FinalCluster", label = TRUE, repel = TRUE, cols = colorCluster) + ggtitle("Labels") + 
+  NoLegend() #+ scale_colour_hue(drop = FALSE)
+
+p2 = DimPlot(rna_new, group.by = "predicted.id", label = TRUE, repel = TRUE, cols = colorCluster) + ggtitle("Predicted") +
+  NoLegend()
+png(paste(outdir,"/ClustName.png", sep = ""),res = 300,height=6,width =10,units = "in") # 
+grid.arrange(p1)
+dev.off()
+
+
+png(paste(outdir,"/predictedvsunsupervised.png", sep = ""),res = 300,height=6,width =10,units = "in")  
+grid.arrange(p3,p2,nrow = 1)
+dev.off()
+```
+
+
+##-----------------------------------------------------#
+##   Looking for geneSet enrichment on cluster markers
+##-----------------------------------------------------#
+
+```{r}
+##--------------------------------------------------#
+##   Looking for cluster markers with new names
+##--------------------------------------------------#
+
+Idents(integrated) <- "FinalCluster"
+markers_cluster <- FindAllMarkers(integrated, logfc.threshold = logfc_threshold)
+markers_cluster_sig <- markers_cluster[markers_cluster$p_val_adj < pval,]
+
+write.table(x = markers_cluster_sig, file = paste0(outdir, "Markers_table.tsv"), quote = F, col.names = T, row.names = F, sep = "\t")
+
+
+##-----------------------------------------------------#
+##   Looking for geneSet enrichment on cluster markers
+##-----------------------------------------------------#
+
+enrich_clust <- list()
+for(cluster in unique(markers_cluster$cluster)){
+  print(cluster)
+  #enrich_clust[[cluster]] <- gprofileR2::gost(markers_cluster[markers_cluster$cluster %in% cluster, "gene"],
+  #organism = "mmusculus",
+  #custom_bg = rownames(seurat),
+  #ordered_query = "none")
+  
+  markers_cluster_gost = markers_cluster[markers_cluster$cluster %in% cluster, "gene"]
+  enrich_clust[[cluster]] <- gProfileR::gprofiler(query = markers_cluster_gost,
+                                                  organism = "mmusculus",
+                                                  custom_bg = rownames(seurat),
+                                                  ordered_query = "none")
+  enrich_clust[[cluster]]$cluster <- cluster
+}
+enrich_clust.df <- do.call("rbind", enrich_clust)
+
+write.table(enrich_clust.df, file = paste0(outdir, "enrichmentTable.tsv"), sep = "\t", row.names = F, col.names = T, quote = F)
+
+
+# Top 10 of genes markers
+top_markers_cl1 = head(markers_cluster_sig[markers_cluster$cluster == "Cl1", ]$gene, 10)
+top_markers_cl2 = head(markers_cluster_sig[markers_cluster$cluster == "Cl2", ]$gene, 10)
+top_markers_cl3 = head(markers_cluster_sig[markers_cluster$cluster == "Cl3", ]$gene, 10)
+top_markers_cl4 = head(markers_cluster_sig[markers_cluster$cluster == "Cl4", ]$gene, 10)
+top_markers_cl5 = head(markers_cluster_sig[markers_cluster$cluster == "Cl5", ]$gene, 10)
+top_markers_cl6 = head(markers_cluster_sig[markers_cluster$cluster == "Cl6", ]$gene, 10)
+top_markers_cl7 = head(markers_cluster_sig[markers_cluster$cluster == "Cl7", ]$gene, 10)
+
+
+# Save clusters markers
+
+write.table(markers_cluster_sig[markers_cluster$cluster == "Cl1", ]$gene, file = paste0(outdir, "markers_cl1.csv"), 
+            row.names = FALSE,col.names = FALSE, quote = FALSE)
+write.table(markers_cluster_sig[markers_cluster$cluster == "Cl2", ]$gene, file = paste0(outdir, "markers_cl2.csv"), 
+            row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(markers_cluster_sig[markers_cluster$cluster == "Cl3", ]$gene, file = paste0(outdir, "markers_cl3.csv"), 
+            row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(markers_cluster_sig[markers_cluster$cluster == "Cl4", ]$gene, file = paste0(outdir, "markers_cl4.csv"),
+            row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(markers_cluster_sig[markers_cluster$cluster == "Cl5", ]$gene, file = paste0(outdir, "markers_cl5.csv"), 
+            row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(markers_cluster_sig[markers_cluster$cluster == "Cl6", ]$gene, file = paste0(outdir, "markers_cl6.csv"), 
+            row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(markers_cluster_sig[markers_cluster$cluster == "Cl7", ]$gene, file = paste0(outdir, "markers_cl7.csv"), 
+            row.names = FALSE, col.names = FALSE, quote = FALSE)
+```

@@ -1,0 +1,1244 @@
+---
+title: "All Functions"
+author: "Babacar NDAO"
+date: "20/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. funForLoading.R
+
+```{r}
+loadCellRangerMatrix <- function(matrix_dir,sample_name = NULL) {
+  if (!is.null(sample_name)) {
+    sample_name <- paste0(sample_name,"_")
+  }
+  barcode.path <- paste0(matrix_dir,"/",sample_name,"barcodes.tsv")
+  features.path <- paste0(matrix_dir,"/",sample_name,"genes.tsv")
+  matrix.path <- paste0(matrix_dir,"/",sample_name,"matrix.mtx")
+  mat <- readMM(file = matrix.path)
+  feature.names = read.delim(features.path, 
+                             header = FALSE,
+                             stringsAsFactors = FALSE)
+  barcode.names = read.delim(barcode.path, 
+                             header = FALSE,
+                             stringsAsFactors = FALSE)
+  colnames(mat) = barcode.names$V1
+  rownames(mat) = feature.names$V1
+  colnames(feature.names) <- c("id", "symbol")
+  rownames(feature.names) <- feature.names$id
+  colnames(barcode.names) <- c("barcode")
+  rownames(barcode.names) <- barcode.names$barcode
+  results <- list()
+  results$exprs <- mat
+  results$fd <- feature.names
+  results$pd <- barcode.names
+  
+  return(results)
+}
+
+loadCellRangerMatrix_cellranger3 <- function(matrix_dir,sample_name =NULL) {
+  if (!is.null(sample_name)) {
+    sample_name <- paste0(sample_name,"_")
+  }
+  barcode.path <- paste0(matrix_dir,"/",sample_name,"barcodes.tsv")
+  features.path <- paste0(matrix_dir,"/",sample_name,"features.tsv")
+  matrix.path <- paste0(matrix_dir,"/",sample_name,"matrix.mtx")
+  mat <- readMM(file = matrix.path)
+  feature.names = read.delim(features.path,
+                             header = FALSE,
+                             stringsAsFactors = FALSE)
+  barcode.names = read.delim(barcode.path,
+                             header = FALSE,
+                             stringsAsFactors = FALSE)
+  colnames(mat) = barcode.names$V1
+  rownames(mat) = feature.names$V1
+  colnames(feature.names) <- c("id", "symbol")
+  rownames(feature.names) <- feature.names$id
+  colnames(barcode.names) <- c("barcode")
+  rownames(barcode.names) <- barcode.names$barcode
+  results <- list()
+  results$exprs <- mat
+  results$fd <- feature.names
+  results$pd <- barcode.names
+
+  return(results)
+}
+
+```
+
+
+
+2. data_preparation.R
+
+```{r}
+# R function to prepare single cell data for monocle & Seurat
+
+getCellCyclePhases <- function(gbm_cds,outdir = "./") {
+  
+  dir.create(path = outdir,recursive = T,showWarnings = F)
+  gene_count_matrix <- as.matrix(exprs(gbm_cds))
+  set.seed(100)
+  mm.pairs <- readRDS(system.file("exdata", "mouse_cycle_markers.rds", package="scran"))
+  assignments <- cyclone(gene_count_matrix, mm.pairs, gene.names=rownames(gene_count_matrix))
+
+  ## add cell cycle phase to pData
+  pData(gbm_cds)$phases <- assignments$phases
+  pData(gbm_cds)$G1_score <- assignments$scores$G1
+  pData(gbm_cds)$G2M_score <- assignments$scores$G2M
+  pData(gbm_cds)$S_score <- assignments$scores$S
+  pData(gbm_cds)[which(pData(gbm_cds)$phases=="G1"),"phases"] <- "G1_G0"
+  pData(gbm_cds)[which(pData(gbm_cds)$phases=="G2M"),"phases"] <- "G2_M"
+  
+  
+  png(paste(outdir,"/cell_cycle_phases_assignment_on_umi.png",sep = ""))
+  plot(assignments$score$G1, assignments$score$G2M, 
+       xlab="G1 score", ylab="G2/M score", pch=16)
+  dev.off()
+  
+  print("Cell cycle phases added..")
+  return(gbm_cds)
+}
+
+getCellCyclePhasesSeurat <- function(seurat,outdir = "./") {
+  
+  dir.create(path = outdir,recursive = T,showWarnings = F)
+  gene_count_matrix <- as.matrix(GetAssayData(seurat,slot = 'counts',assay = "RNA"))
+  set.seed(100)
+  mm.pairs <- readRDS(system.file("exdata", "mouse_cycle_markers.rds", package="scran"))
+  assignments <- cyclone(gene_count_matrix, mm.pairs, gene.names=rownames(gene_count_matrix))
+  
+  ## add cell cycle phase to pData
+  seurat@meta.data$phases <- assignments$phases
+  seurat@meta.data$G1_score <- assignments$scores$G1
+  seurat@meta.data$G2M_score <- assignments$scores$G2M
+  seurat@meta.data$S_score <- assignments$scores$S
+  seurat@meta.data[which(seurat@meta.data$phases=="G1"),"phases"] <- "G1_G0"
+  seurat@meta.data[which(seurat@meta.data$phases=="G2M"),"phases"] <- "G2_M"
+  
+  
+  png(paste(outdir,"/cell_cycle_phases_assignment_on_umi.png",sep = ""))
+  plot(assignments$score$G1, assignments$score$G2M, 
+       xlab="G1 score", ylab="G2/M score", pch=16)
+  dev.off()
+  
+  print("Cell cycle phases added..")
+  return(seurat)
+}
+
+
+
+addPercentMitoch <- function(gbm_cds) {      #in fact this is fraction of mitochondrial transcripts
+  mitoGenes <- grep(pattern = "mt-",x=fData(gbm_cds)$gene_short_name,value = T)
+  mitoGenesEnsembl <- rownames(gbm_cds)[which(is.element(el = fData(gbm_cds)$gene_short_name,set = mitoGenes))]
+  percentMito <- Matrix::colSums(as.matrix(exprs(gbm_cds))[mitoGenesEnsembl, ])/Matrix::colSums(as.matrix(exprs(gbm_cds)))
+  pData(gbm_cds)$percentMito <- percentMito
+  return(gbm_cds)
+}
+
+
+#Filtering low-quality cells
+
+filterCells <- function(gbm_cds,outdir="./",num_cells_expressed=10,min_expr=0.1,propMitochFilter=NULL) {
+  
+  dir.create(path = outdir,recursive = T,showWarnings = F)
+  
+  #Set detection threshold
+  gbm_cds <- detectGenes(gbm_cds, min_expr = min_expr)
+  
+  #Define gene expressed as gene detected in more than n cell (only use for plotting distribution)
+  expressed_genes <- row.names(subset(fData(gbm_cds),            
+                                    num_cells_expressed >= num_cells_expressed))
+
+  #filtering cells as explained in monocle doc, cutting distribution tails
+  #eg. remove cells with no RNA or too much RNA
+
+  pData(gbm_cds)$Total_mRNAs <- Matrix::colSums(exprs(gbm_cds))
+  
+  png(paste(outdir,"/densityTotalmRNA_raw.png",sep =""))
+  qplot(Total_mRNAs, data = pData(gbm_cds), geom ="density")
+  dev.off()
+  
+  upper_bound <- 10^(mean(log10(pData(gbm_cds)$Total_mRNAs)) +
+                     2*sd(log10(pData(gbm_cds)$Total_mRNAs)))
+  lower_bound <- 10^(mean(log10(pData(gbm_cds)$Total_mRNAs)) -
+                     2*sd(log10(pData(gbm_cds)$Total_mRNAs)))
+
+  png(paste(outdir,"/densityWithFirstFilter.png",sep =""))
+  print(qplot(Total_mRNAs, data = pData(gbm_cds), geom ="density") + 
+          geom_vline(xintercept = lower_bound) + 
+          geom_vline(xintercept = upper_bound))
+  dev.off()
+  
+  gbm_cds <- gbm_cds[,pData(gbm_cds)$Total_mRNAs > lower_bound &
+                       pData(gbm_cds)$Total_mRNAs < upper_bound]
+
+  # redefining expressed gene after cells filtering
+  gbm_cds <- detectGenes(gbm_cds, min_expr = min_expr)
+  expressed_genes <- row.names(subset(fData(gbm_cds),num_cells_expressed >= num_cells_expressed)) #genes expressed in at least 10 cells of the data set.
+  
+  # Log-transform each value in the expression matrix.
+  L <- log(exprs(gbm_cds[expressed_genes,]))
+
+  # Standardize each gene, so that they are all on the same scale,
+  # Then melt the data with plyr so we can plot it easily
+  melted_dens_df <- reshape2::melt(Matrix::t(scale(Matrix::t(L))))
+
+  # Plot the distribution of the standardized gene expression values.
+  png(paste(outdir,"/standardized_distribution.png",sep =""))
+  print(qplot(value, geom = "density", data = melted_dens_df) +
+        stat_function(fun = dnorm, size = 0.5, color = 'red') +
+        xlab("Standardized log(UMIcounts)") +
+        ylab("Density"))
+  dev.off()
+  
+  ## Visualize percentage of mitochondiral genes
+  gbm_cds <- addPercentMitoch(gbm_cds)
+  
+  png(paste(outdir,"/percent_mito.png",sep =""))
+  plot(hist(gbm_cds$percentMito*100,breaks = 100),main = "percentage of mitochondrial transcripts")
+  abline(v=propMitochFilter*100)
+  dev.off()
+  
+  return(gbm_cds)
+
+}
+
+```
+
+
+
+3. getSigPerCells.R
+
+```{r}
+getSignatures <- function(m,pheno,cellType,data,id_type = "gene_short_name",outdir="./",padj = 0.05) {
+  phenoTest <- pheno
+  phenoTest[which(phenoTest!=cellType)] <- "othersHSPC"
+  cat("Calling differentially expressed genes (DESeq2\n")
+  des <- DESeqDataSetFromMatrix(m, as.data.frame(phenoTest), design=formula(~phenoTest))
+  dds <- DESeq(des,parallel=T)
+  res <- results(dds,contrast=c("phenoTest",cellType,"othersHSPC"))
+  resOrdered <- res[order(res$padj),]
+  #save.image("image.Rdata")
+  out <- as.data.frame(resOrdered)
+  #resMLE<- results(dds, addMLE=TRUE)
+  res <- results(dds)
+  resOrdered <- res[order(res$padj),]
+  #save.image("image.Rdata")
+  out <- as.data.frame(resOrdered)
+  log2.counts <- log2(counts(dds, normalized=TRUE) + 1)
+  colnames(log2.counts) <- colnames(m)
+  out <- data.frame(out, log2.counts[rownames(out),],data[rownames(out),"Gene.Symbol"])
+  colnames(out)[length(colnames(out))] = "gene_short_name"
+  out_save <- out[which(out$padj < 0.05 & out$log2FoldChange<0),]
+  out_save <- out_save[order(out_save$padj),]
+  write.table(out_save,paste(outdir,"/",paste(cellType,"vs",paste(unique(pheno[which(pheno!=cellType)]),collapse = ""),sep = "_"),".tsv",sep =""),sep="\t",quote=F,col.names = NA)
+  
+  gene_sig <- as.vector(out_save[which(out_save$padj<padj),id_type])
+  return(list(genes = gene_sig, table = out))
+}
+
+
+
+AddSigScoreMonocle <- function(gbm_cds,ntop,sigRes,cellTypeScore) {
+  
+  seurat <- exportCDS(gbm_cds,"Seurat")
+
+  sigRes <- sigRes[which(sigRes$padj < 0.05),]
+  
+  print(head(sigRes))
+
+  gene_sig <- rownames(sigRes[which(sigRes$log2FoldChange<0),])[c(1:50)]
+  
+  print(head(gene_sig))
+
+  seurat <- AddModuleScore(seurat, genes.list = list(gene_sig), genes.pool = NULL, n.bin = 25,
+                  seed.use = 1, ctrl.size = 100, use.k = FALSE,
+                  random.seed = 1)
+  print("calcul ok")
+  print(head(seurat@meta.data))
+  pData(gbm_cds)$newScore <- seurat@meta.data[,length(colnames(seurat@meta.data))]
+  print("ok)")
+  colnames(pData(gbm_cds))[length(colnames(pData(gbm_cds)))] <- cellTypeScore
+  print("ok2")
+  print(plot_cell_trajectory(gbm_cds,color_by=cellTypeScore) + scale_color_gradient( low="grey",high="red"))
+  return(gbm_cds)
+}
+
+
+
+AddSigScore <- function(seurat,ntop,sigRes,scoreName) {
+  
+  sigRes <- sigRes[which(sigRes$padj < 0.05),]
+  
+  print(head(sigRes))
+  
+  gene_sig <- sigRes[which(sigRes$log2FoldChange<0),"gene_short_name"][c(1:50)]
+  
+  print(head(gene_sig))
+  
+  seurat <- AddModuleScore(seurat, genes.list = list(gene_sig), genes.pool = NULL, n.bin = 25,
+                           seed.use = 1, ctrl.size = 100, use.k = FALSE, enrich.name= scoreName,
+                           random.seed = 1)
+  print("calcul ok")
+  colnames(seurat@meta.data)[length(colnames(seurat@meta.data))] <- scoreName
+  print(head(seurat@meta.data))
+  return(seurat)
+}
+
+getKeggSig <- function(queryIndex) {
+  fullName <- queryIndex$NAME
+  name <- strsplit(fullName,split = " ")[[1]][1]
+  name <- gsub(name,pattern = "-",replacement = "_")
+  name <- paste(name,"_Kegg",sep ="")
+  print(name)
+  result <- data.frame(strsplit(queryIndex$GENE,";"))
+  result_t <- t(result)
+  result_vector <- as.vector(result_t[,1])
+  result_genes <- result_vector[!grepl("^[0-9]{1,}$", result_vector)]
+  
+  return(list(name = name,genes = result_genes))
+}
+
+getKeggSigList <- function(query) {
+  results <- lapply(query,getKeggSig)
+  names(results) <- unlist(lapply(results,'[[',1))
+  return(results)
+}
+
+
+getMicroArraySig <- function(file) {
+  arraySigName <- paste(strsplit(file,split="_")[[1]][2],"_Chambers",sep="")
+  arraySig <- as.vector(na.omit(read.table(paste(opt$input_microArraySigDir,file,sep="/"),sep =";",header =T,quote = "\"")$Gene.Symbol))
+  return(list(name = arraySigName,genes = arraySig))
+}
+
+getMicroArraySigList <- function(fileList) {
+  results <- lapply(fileList,getMicroArraySig)
+  names(results) <- unlist(lapply(results,'[[',1))
+  return(results)
+}
+
+
+read_excel_allsheets <- function(filename, tibble = FALSE) {
+  sheets <- readxl::excel_sheets(filename)
+  x <- lapply(sheets, function(X) readxl::read_excel(filename, sheet = X))
+  if(!tibble) x <- lapply(x, as.data.frame)
+  names(x) <- sheets
+  x
+}
+
+
+getGeneNameCol <- function(sheet) {
+  result <- sheet[,"Gene Symbol"]
+  result <- result[which(result != "NA")]
+  return(result)
+}
+
+
+getMicroArraySigListXls <- function(allsheets) {
+  allsheets <- allsheets[-1]
+  results <- lapply(allsheets,getGeneNameCol)
+  names(results) <-paste(gsub("\\.txt","",names(allsheets)),"_Chambers",sep="")
+  return(results)
+}
+
+
+
+
+
+getBM_vector <- function(goTerm,idType = "external_gene_name",mart) {
+  result <- getBM(attributes=c("ensembl_gene_id","external_gene_name","name_1006"),
+                  filters=c("go"),
+                  values=list(goTerm),mart=mart)
+  head(result)
+  out <- unique(result[,idType])
+  name <- gsub(Term(goTerm),pattern=" |-", replacement= "_")
+  name <- paste(name,"_GO",sep="")
+  print(name)
+  return(list(name = name,genes = out))
+}
+
+#Function to score cell in seurat with a gene signature
+
+# DEPRECATED Seurat 2
+# scoreCells <- function(seurat,signature,outdir,sigName) {
+#   #remove old slot
+#   if (!is.null(seurat@meta.data[[sigName]])) {
+#     seurat@meta.data[[sigName]] <- NULL
+#   }
+#   seurat <- AddModuleScore(seurat, genes.list = list(signature), genes.pool = NULL, n.bin = 25,
+#                            seed.use = 1, ctrl.size = 100, use.k = FALSE, enrich.name= sigName,
+#                            random.seed = 1)
+#   colnames(seurat@meta.data)[length(seurat@meta.data)] <- sigName
+#   #print(head(seurat@meta.data))
+#   if(!is.null(outdir)) {
+#   #print("plot")
+#   png(paste(outdir,"/",sigName,".png",sep =""))
+#   FeaturePlot(seurat,features.plot=sigName)
+#   dev.off()
+#   }
+#   return(seurat)
+#   
+# }
+
+#For seurat3
+
+scoreCells3 <- function(seurat,signature,outdir,sigName) {
+  #remove old slot
+  if (!is.null(seurat@meta.data[[sigName]])) {
+    seurat@meta.data[[sigName]] <- NULL
+  }
+  seurat <- AddModuleScore(seurat, features = list(signature), pool = NULL, nbin = 25,
+                           seed = 1, ctrl = 100, k = FALSE, name= sigName)
+  colnames(seurat@meta.data)[length(seurat@meta.data)] <- sigName
+  #print(head(seurat@meta.data))
+  if(!is.null(outdir)) {
+    #print("plot")
+    png(paste(outdir,"/",sigName,".png",sep =""))
+    plot(FeaturePlot(seurat,features=sigName))
+    dev.off()
+  }
+  return(seurat)
+  
+}
+## Test cell signature
+
+```
+
+
+
+4. Enrichment.R
+
+```{r}
+# function to make gene enrichment analyzis with gProfileR
+
+## function to perform gprofler enrcihment analysis on each gene cluster of 
+## a differentially expressed gene result (eg data frame of DE genes with a column cluster)
+getGeneClustGprofile <- function(deg_clust,
+                                 background,
+                                 organism = "mmusculus",
+                                 hier_filtering = "none",
+                                 ordered_query = F) {
+  
+  resEnrichTest <- lapply(split(as.vector(deg_clust$Gene),f= deg_clust$Cluster),gprofiler,
+                    organism = "mmusculus",
+                    custom_bg = background,
+                    ordered_query = ordered_query,
+                    hier_filtering = hier_filtering)
+  return(resEnrichTest)
+}
+
+
+## function to plot gprofiler results
+plotWriteResEnrich <- function(resEnrichTest,
+                          sources=c("BP","keg"),
+                          outdir = "./gprofiler",
+                          clusterLabel =names(resEnrichTest),
+                          colors = brewer.pal(length(resEnrichTest)+1, "Set1")) {
+  
+  dir.create(outdir,recursive = T,showWarnings = F)
+  
+  colors <- colors
+
+  for (cluster in clusterLabel) {
+    write.table(file= paste(outdir,"/gprofiler_table_clust_",cluster,".tsv", sep = ""),
+                            resEnrichTest[[cluster]],quote = F,sep = '\t',row.names = F)
+    for (s in sources) {
+      results <- resEnrichTest[[cluster]][which(resEnrichTest[[cluster]][,"domain"] == s),]
+      results <- results[order(results$p.value),]
+      results <- as.data.frame(results[,c("term.id","term.name","p.value")])
+      results$logPval <- -log(base = 10,x = results$p.value)
+      if(s == "tf") {
+        results$term.name <- paste(results$term.name,results$term.id)
+      }
+      
+      ## TO DO : if to much term plot only the first n 
+      
+      if (length(results$term.name) > 55) {
+        png(paste(outdir,"/gprofiler_top30_",cluster,"_",s,".png",sep =""),width = 600,height = 600)
+        gp <- ggplot(results[c(1:30),], aes(x=reorder(term.name, logPval), y=logPval)) +
+          geom_bar(stat='identity',fill = colors[which(names(resEnrichTest)==cluster)] ) +
+          coord_flip() +
+          xlab("term name") +
+          ylab("-log10(p value)") +
+          theme(text = element_text(size = 20))
+        print(gp)
+        
+        dev.off()
+        
+        png(paste(outdir,"/gprofiler_",cluster,"_",s,".png",sep =""),width = 1400,height = 1400)
+        
+      } else {
+        png(paste(outdir,"/gprofiler_",cluster,"_",s,".png",sep =""),width = 600,height = 600)
+      }
+      gp <- ggplot(results, aes(x=reorder(term.name, logPval), y=logPval)) +
+        geom_bar(stat='identity',fill = colors[which(names(resEnrichTest)==cluster)] ) +
+        coord_flip() +
+        xlab("term name") +
+        ylab("-log10(p value)") +
+        theme(text = element_text(size = 20))
+      print(gp)
+      
+      dev.off()
+    }
+    
+  }
+}
+
+## function to composate
+gProfileAnalysis <- function(deg_clust,
+                             background,
+                             organism = "mmusculus",
+                             hier_filtering = "moderate",
+                             ordered_query = F,
+                             sources=c("BP","keg","CC",'MF','tf'),
+                             outdir = "/gprofiler",
+                             clusterLabel =names(resEnrichTest),
+                             colors = brewer.pal(length(resEnrichTest)+1, "Set1")) {
+  
+  resEnrichTest <- getGeneClustGprofile(deg_clust = deg_clust,
+                                        background = background,
+                                        organism = organism,
+                                        hier_filtering = hier_filtering,
+                                        ordered_query = ordered_query)
+  
+  plotWriteResEnrich(resEnrichTest,
+                     sources=sources,
+                     outdir = outdir,
+                     clusterLabel =clusterLabel,
+                     colors = colors)
+  
+  return(resEnrichTest)
+  
+}
+
+# function for hypergeometric test
+
+# hypergeometric test https://dputhier.github.io/ASG/practicals/go_statistics_td/go_statistics_td_2015.html
+
+#DEPRECATED Seurat 2
+# testHyper <- function(gene_set, signature, background,seurat) {
+#     signature <- signature[which(is.element(signature,set = rownames(seurat@data)))]
+#     genesMarked <- gene_set[which(is.element(gene_set,set = signature))]
+#     p.value <-  phyper(q=length(genesMarked) -1, 
+#                        m=length(signature),                  
+#                        n=length(background) - length(signature), k= length(gene_set), lower.tail=FALSE)
+#     return(p.value)
+# }
+
+#For Seurat 3
+testHyper3 <- function(gene_set, signature, background,seurat) {
+  signature <- signature[which(is.element(signature,set = rownames(seurat)))]
+  genesMarked <- gene_set[which(is.element(gene_set,set = signature))]
+  p.value <-  phyper(q=length(genesMarked) -1, 
+                     m=length(signature),                 
+                     n=length(background) - length(signature), k= length(gene_set), lower.tail=FALSE)
+  return(p.value)
+}
+
+
+
+testHyperCells <- function(cells_pull, cells_setTarget, allCells) {
+  cellsMarked <- gene_set[which(is.element(gene_set,set = cells_set))]
+  p.value <-  phyper(q=length(cellsMarked) -1, 
+                     m=length(cells_setTarget),
+                     n=length(allCells) - length(cells_setTarget), k= length(cells_pull), lower.tail=FALSE)
+  return(p.value)
+}
+
+## DEPRECATED Seurat2
+# testHyperSig <- function(signature,seurat,markers,clust) {  
+#   result <- testHyper(gene_set=markers[which(markers$Cluster == clust),"Gene"],
+#                       signature=signature,seurat=seurat,background=rownames(seurat@data))
+#   return(result)
+# }
+
+#For Seurat 3
+testHyperSig3 <- function(signature,seurat,markers,clust) { 
+  result <- testHyper3(gene_set=markers[which(markers$Cluster == clust),"Gene"],
+                       signature=signature,seurat=seurat,background=rownames(seurat))
+  return(result)
+}
+
+```
+
+
+
+5. funForSeurat.R
+```{r}
+firstup <- function(x) {
+  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+  x
+}
+
+
+# DEPRECATED Seurat2
+# getClustInfo <- function(clust,signatures,testHyperSig,seurat,groupingName =NULL,markers) {
+#   clustInfo <- list()
+#   clustInfo$num_cells <- dim(seurat@meta.data[which(seurat@ident==clust),])[1]
+#   clustInfo$percent_cells <- clustInfo$num_cells/dim(seurat@meta.data)[1]
+#   
+#   # if(!is.null(groupingName)) {
+#   #   for (sample_name in unique(seurat@meta.data$sampleName)) {
+#   #     clustInfo[[paste(sample_name,"percentCells",sep ="")]] <- dim(seurat@meta.data[which(seurat@ident==clust & seurat@meta.data$sampleName==sample_name),])[1]/clustInfo$num_cells
+#   #   }
+#   # }
+#     
+#     percentPhases <- table(seurat@meta.data[which(seurat@ident==clust),"phases"])/length(seurat@meta.data[which(seurat@ident==clust),"phases"]) #In fact this is fraction not percentage
+#   
+#       
+#     # clustInfo$percent_G1_G0 <-percentPhases["G1_G0"]
+#     # clustInfo$percent_S <- percentPhases["S"]
+#     # clustInfo$percent_G2_M <- percentPhases["G2_M"]
+#     
+#     for (p in c("G1_G0","S","G2_M")) {
+#       if (is.element(p,names(percentPhases))) {
+#         clustInfo[[p]] <- percentPhases[p] 
+#       } else {
+#         clustInfo[[p]] <- 0
+#       }
+#     }
+#     
+#     # cell types
+#     percentCellType <- table(seurat@meta.data[which(seurat@ident==clust),"CellType"])/length(seurat@meta.data[which(seurat@ident==clust),"CellType"])
+#     
+#     for (t in unique(seurat@meta.data$CellType)) {
+#       if (is.element(t,names(percentCellType))) {
+#         clustInfo[[t]] <- percentCellType[t] 
+#       } else {
+#         clustInfo[[t]] <- 0
+#       }
+#     }
+#     
+#     if(!is.null(seurat@meta.data$age)) {
+#       
+#       # cell types
+#     percentAge <- table(seurat@meta.data[which(seurat@ident==clust),"age"])/length(seurat@meta.data[which(seurat@ident==clust),"age"])
+#     
+#     EnrichAge <- (table(seurat@meta.data[which(seurat@ident==clust),"age"]) / ((table(seurat@meta.data[,"age"])/sum(table(seurat@meta.data[,"age"])))*clustInfo$num_cells)) - 1
+#     
+#     for (a in unique(seurat@meta.data$age)) {
+#       if (is.element(a,names(percentAge))) {
+#         clustInfo[[a]] <- percentAge[a] 
+#         clustInfo[[paste("enrichAge_",a,sep ="")]] <- EnrichAge[a]
+#       } else {
+#         clustInfo[[a]] <- 0
+#       }
+#     }
+#       
+#     }
+#     
+#     if(!is.null(seurat@meta.data$percentCellTypeAge)) {
+#       
+#       # cell types by age
+#       percentCellTypeAge <- table(seurat@meta.data[which(seurat@ident==clust),"CellTypeAge"])/length(seurat@meta.data[which(seurat@ident==clust),"CellTypeAge"])
+#       
+#       for (at in unique(seurat@meta.data$CellTypeAge)) {
+#         if (is.element(a,names(percentCellTypeAge))) {
+#           clustInfo[[at]] <- percentCellTypeAge[at] 
+#         } else {
+#           clustInfo[[at]] <- 0
+#         }
+#       }
+#       
+#     }
+#     
+#     
+#     
+#     clustInfo$median_genes_expressed <- median(seurat@meta.data[which(seurat@ident==clust),"numGenesPerCells"])
+#     clustInfo$median_nUMI <- median(seurat@meta.data[which(seurat@ident==clust),"Total_mRNAs"])
+#     clustInfo$median_percentMitochGenes <- median(seurat@meta.data[which(seurat@ident==clust),"percentMito"])
+#     
+#     clustSig <- lapply(signatures,testHyperSig,seurat,clust,markers = markers) #forgot markers arg
+#     
+#     clustInfo <- c(clustInfo,clustSig)
+#     
+#     return(clustInfo)
+#     
+# }
+
+
+FindAgingMarkers3 <- function(cluster,hspc.combined) {
+  hspc.combined$cluster.AGE <- paste(Idents(object = hspc.combined), hspc.combined$AGE, sep = "_")
+  Idents(object = hspc.combined) <- "cluster.AGE"
+  agingMarkers <- FindMarkers(object = hspc.combined, 
+                              ident.1 = paste(cluster,"_Old",sep = ""), 
+                              ident.2 = paste(cluster,"_Young",sep = ""), 
+                              verbose = FALSE)
+  agingMarkers$Cluster <- paste(cluster,"_Old_up",sep ="")
+  agingMarkers$Cluster[which(agingMarkers$avg_logFC < 0)] <- paste(cluster,"_Old_down",sep ="")
+  agingMarkers$Gene <- rownames(agingMarkers)
+  agingMarkers <- agingMarkers[order(agingMarkers$avg_logFC),]
+  agingMarkers <- agingMarkers[which(agingMarkers$p_val_adj < 0.05),]
+  return(agingMarkers)
+}
+
+# DEPRECATED Seurat2
+# FindAgingMarkers <- function(cluster,seurat.combined,outdir = "./",logfc.threshold = 0.25) {
+#   age <- unique(seurat.combined@meta.data$age)
+#   ident.1 <- paste0(cluster,"_age_",age[1])
+#   ident.2 <- paste0(cluster,"_age_",age[2])
+#   age_effect <- FindMarkers(seurat.combined, ident.1 = ident.1, ident.2 = ident.2, 
+#                             print.bar = FALSE,logfc.threshold = logfc.threshold)
+#   dir.create(paste(outdir,"/aging_test_on_cluster_",cluster,sep =""),showWarnings = F)
+#   
+#   print(cluster)
+#   
+#   age_effect <- age_effect[which(age_effect$p_val_adj < 0.05),]
+#   
+#   if(dim(age_effect)[1]!=0) {
+#     age_effect <- age_effect[order(age_effect$avg_logFC),]
+#     age_effect$Gene <- rownames(age_effect)
+#     age_effect$Cluster <- NA
+#     age_effect[which(age_effect$avg_logFC > 0),"Cluster"] <- "Old_down"
+#     age_effect[which(age_effect$avg_logFC < 0),"Cluster"] <- "Old_up"
+#     age_effect$Cluster <- paste(age_effect$Cluster,"_cluster_",cluster,sep="")
+#     
+#     resDir <- paste(outdir,"/aging_test_on_cluster_",cluster,sep ="")
+#     
+#     gprofileClustResult <- gProfileAnalysis(deg_clust = age_effect,
+#                                             outdir = paste(resDir,"/gProfiler", sep =""),
+#                                             background = row.names(seurat.combined@data))
+#     
+#     # with a specific bg
+#     
+# 
+#     colClustRes <- "numclust"
+#     cellInClust <- row.names(seurat.combined@meta.data[which(seurat.combined@meta.data[,colClustRes]==cluster),])
+# 
+#     
+#     subSeurat <- SubsetData(seurat.combined,cells.use = cellInClust)
+#     print(is(subSeurat))
+#     
+#     #get expressed genes in this cluster
+#     num.cells <- rowSums(as.matrix(subSeurat@data) > 0)
+#     genes.use <- names(num.cells[which(num.cells >= 1)])
+#     
+#     gprofileClustResult <- gProfileAnalysis(deg_clust = age_effect,
+#                                             outdir = paste(resDir,"/gProfilerSpecificBg", sep =""),
+#                                             background = genes.use)
+#   }
+#   
+#   #############################################################################################################
+#   write.table(age_effect,paste(outdir,"/aging_test_on_cluster_",cluster,"/AgingMarkers_of_clust",cluster,".tsv", sep =""),sep = "\t",quote = F,col.names = NA)
+#   return(age_effect)
+# }
+
+
+# DEPRECATED Seurat2
+# removeNonExpressedGenes <- function(seurat,minPropCellExp) {
+#   pd <- new("AnnotatedDataFrame", data = seurat@meta.data)
+#   fd <- new("AnnotatedDataFrame", data = data.frame(gene_short_name = rownames(seurat@data)))
+#   rownames(fd) <- fd$gene_short_name
+#   
+#   gbm_cds <- newCellDataSet(seurat@raw.data,
+#                             phenoData = pd,
+#                             featureData = fd,
+#                             lowerDetectionLimit = 0.1,
+#                             expressionFamily = negbinomial.size())
+#   
+#   gbm_cds <- detectGenes(gbm_cds, min_expr = 0.1)
+#   
+#   
+#   
+#   print("remove non expressed genes in the subset (non expressed in at least X% of the cells X user option in monocle dp feature 5% in seurat tutorial 0,1%)")
+#   fData(gbm_cds)$use_for_seurat <- fData(gbm_cds)$num_cells_expressed > minPropCellExp * ncol(gbm_cds)
+#   
+#   gbm_to_seurat <- gbm_cds[fData(gbm_cds)$use_for_seurat==T,]
+#   gbm_to_seurat <- gbm_cds
+#   
+#   # Only needed if ensemble id to lazy to code the test for the moment 
+#   #rownames(gbm_to_seurat) <- make.unique(fData(gbm_to_seurat)$gene_short_name,sep = "_") #be careful in diff exp results for gene test enrichment
+#   
+#   if (is.element("Cluster",colnames(pData(gbm_to_seurat)))) {
+#     colnames(pData(gbm_to_seurat))[which(colnames(pData(gbm_to_seurat))=="Cluster")] <- "Cluster_monocle"
+#   }
+#   ##Convert to seurat
+#   seurat <- exportCDS(gbm_to_seurat,"Seurat")
+#   
+#   return(seurat)
+#   
+# }
+
+
+## DEPRECATED Seurat 2 Rename ident 
+
+# renameIdent <- function(seurat, old.ident.name,new.ident.name) {
+#   
+#   seurat@ident <- plyr::mapvalues(x = seurat@ident, from = old.ident.name, to = new.ident.name)
+#   seurat@ident <- factor(x = seurat@ident, levels = new.ident.name)
+#   
+#   return(seurat)
+# }
+
+
+
+
+getAGEPropPerClustBarplot <- function(hspc.combined) {
+  clusterAge <- ddply(hspc.combined@meta.data,~numclust + AGE,nrow)
+  
+  propExpect <- table(hspc.combined@meta.data$AGE)/length(hspc.combined@meta.data$AGE)[]
+  propYoungExp <- propExpect[[unique(hspc.combined@meta.data$AGE)[1]]]
+  
+  #clusterAGE$numclust <- factor(v$clusterNature , levels = c(""))
+  clusterAge$AGE <- factor(clusterAge$AGE , levels = c("Old","Young")) 
+  
+  
+  AGE <- ggplot(data.frame(clusterAge), aes(fill = AGE,y = V1, x=numclust,levels = "Young","Old")) +
+    geom_bar( stat="identity", position="fill")+
+    scale_fill_manual( values= rev(hue_pal()(length(unique(hspc.combined@meta.data$AGE)))))+
+    scale_y_continuous(name = "Age (%)", labels = c(0,25,50,75,100))+
+    ylab(label = "")+xlab(label = "") + coord_flip() + geom_hline(yintercept = propYoungExp)+
+    theme(legend.title=element_blank())
+  return(AGE)
+  
+}
+
+
+getSamplePropPerClustBarplot <- function(hspc.combined) {
+  clustersampleName <- ddply(hspc.combined@meta.data,~numclust + sampleName,nrow)
+  
+  propExpect <- table(hspc.combined@meta.data$sampleName)/length(hspc.combined@meta.data$sampleName)[]
+  propYoungExp <- propExpect[[unique(hspc.combined@meta.data$sampleName)[1]]]
+  
+  #clustersampleName$numclust <- factor(v$clusterNature , levels = c(""))
+  #clustersampleName$sampleName <- factor(clustersampleName$predicted , levels = c("")) 
+  
+  
+  sampleName <- ggplot(data.frame(clustersampleName), aes(fill = sampleName,y = V1, x=numclust)) +
+    geom_bar( stat="identity", position="fill")+
+    scale_fill_manual( values= rev(hue_pal()(length(unique(hspc.combined@meta.data$sampleName)))))+
+    scale_y_continuous(name = "Sample (%)", labels = c(0,25,50,75,100))+
+    ylab(label = "")+xlab(label = "") + coord_flip()+
+    theme(legend.title=element_blank()) 
+  return(sampleName)
+  
+}
+
+getRunDatePropPerClustBarplot <- function(hspc.combined) {
+  clusterrunDate <- ddply(hspc.combined@meta.data,~numclust + runDate,nrow)
+  
+  propExpect <- table(hspc.combined@meta.data$runDate)/length(hspc.combined@meta.data$runDate)[]
+  propYoungExp <- propExpect[[unique(hspc.combined@meta.data$runDate)[1]]]
+  
+  #clusterrunDate$numclust <- factor(v$clusterNature , levels = c(""))
+  #clusterrunDate$runDate <- factor(clusterrunDate$predicted , levels = c("")) 
+  
+  
+  runDate <- ggplot(data.frame(clusterrunDate), aes(fill = runDate,y = V1, x=numclust))  +
+    geom_bar( stat="identity", position="fill")+
+    scale_fill_manual( values= rev(hue_pal()(length(unique(hspc.combined@meta.data$runDate)))))+
+    scale_y_continuous(name = "Run date (%)", labels = c(0,25,50,75,100))+
+    ylab(label = "")+xlab(label = "") + coord_flip()+
+    theme(legend.title=element_blank())  
+  return(runDate)
+  
+}
+
+getPhasePropPerClustBarplot <- function(hspc.combined) {
+  clusterphases <- ddply(hspc.combined@meta.data,~numclust + phases,nrow)
+  
+  propExpect <- table(hspc.combined@meta.data$phases)/length(hspc.combined@meta.data$phases)[]
+  propYoungExp <- propExpect[[unique(hspc.combined@meta.data$phases)[1]]]
+  
+  #clusterphases$numclust <- factor(v$clusterNature , levels = c(""))
+  #clusterphases$phases <- factor(clusterphases$predicted , levels = c("")) 
+  
+  
+  phases <- ggplot(data.frame(clusterphases), aes(fill = phases,y = V1, x=numclust)) +
+    geom_bar( stat="identity", position="fill")+
+    scale_fill_manual( values= rev(hue_pal()(length(unique(hspc.combined@meta.data$phases)))))+
+    scale_y_continuous(name = "Cell cycle phase (%)", labels = c(0,25,50,75,100))+
+    ylab(label = "")+xlab(label = "") + coord_flip() +
+    theme(legend.title=element_blank())  
+  return(phases)
+  
+}
+
+
+getPredictedPropPerClustBarplot <- function(hspc.combined) {
+  clusterpredicted <- ddply(hspc.combined@meta.data,~numclust + predicted,nrow)
+  
+  propExpect <- table(hspc.combined@meta.data$predicted)/length(hspc.combined@meta.data$predicted)[]
+  propYoungExp <- propExpect[[unique(hspc.combined@meta.data$predicted)[1]]]
+  
+  #clusterpredicted$numclust <- factor(v$clusterNature , levels = c(""))
+  #clusterpredicted$predicted <- factor(clusterpredicted$predicted , levels = c("")) 
+  
+  
+  predicted <- ggplot(data.frame(clusterpredicted), aes(fill = predicted,y = V1, x=numclust)) +
+    geom_bar( stat="identity", position="fill")+
+    scale_fill_manual( values= hue_pal()(length(unique(hspc.combined@meta.data$predicted))))+
+    scale_y_continuous(name = "Cell type (%)", labels = c(0,25,50,75,100))+
+    ylab(label = "")+xlab(label = "") + coord_flip()+
+    theme(legend.title=element_blank())  
+  return(predicted)
+  
+}
+
+
+
+
+getEnrichAge <- function(hspc.combined,clustCol ='clusterName',metaCol = "age") {
+  
+  table <- table(hspc.combined@meta.data[,metaCol],hspc.combined@meta.data[,clustCol])
+  
+  #Remove null column in case of reclustering has been made
+  
+  table <- table[,as.vector(which(colSums(table)>0))]
+  
+  tablePercent <- prop.table(table,2)
+  
+  propExpect <- table(hspc.combined@meta.data[,metaCol])/length(hspc.combined@meta.data[,metaCol])
+  propExpectAge_1<- propExpect[[unique(hspc.combined@meta.data[,metaCol])[1]]]
+  propExpectAge_2<- propExpect[[unique(hspc.combined@meta.data[,metaCol])[2]]]
+  phyper <- rep(NA,length(colnames(table)))
+  enrich <- rep(NA,length(colnames(table)))
+  tablePercent <- rbind(tablePercent,enrich,phyper)
+  
+  
+  for (age in unique(hspc.combined@meta.data[,metaCol])) {
+    for (cluster in colnames(table)) {
+      if(tablePercent[age,cluster] > propExpect[[age]]) {
+        cells_pull_marked <- table[age,as.character(cluster)]
+        cells_pull <- as.numeric(colSums(table)[as.character(cluster)])
+        cells_marked_all <- rowSums(table)[age]
+        all_cells <- length(hspc.combined@meta.data[,metaCol])
+        
+        
+        
+        p.value <-  phyper(q=cells_pull_marked -1, 
+                           m=cells_marked_all,
+                           n=all_cells - cells_marked_all, k= cells_pull, lower.tail=FALSE)
+        
+        tablePercent["enrich",cluster] <- age
+        
+        tablePercent["phyper",cluster] <- p.value
+        
+      }
+    }
+  }
+  return(tablePercent)
+
+}
+
+
+
+
+
+
+# Make a summary teble of cluster metrics and signature enrichments
+
+getClustTable <- function(rodriguezSig,markers,signatures,seurat,outdir) {
+  clusterNames <- c("C1","C2","C3","Mk","Er","Ba","Neu","Mo1","Mo2", "preDC","preB","preT")
+  
+  RodriguezClustersSig <- lapply(X= c(1:length(clusterNames)),FUN = read_xlsx,path = rodriguezSig)
+  
+  names(RodriguezClustersSig) <- clusterNames 
+  
+  getOnlyPos <- function(clustersSig) {
+    clusterSig <- clustersSig[which(clustersSig$log.effect > 0),]
+    return(clusterSig)
+  }
+  
+  RodriguezClustersSigPos <- lapply(X= RodriguezClustersSig, getOnlyPos)
+  
+  
+  signaturesRodriguez <- lapply(RodriguezClustersSigPos,"[[",1 )
+  
+  
+  firstup <- function(x) {
+    substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+    x
+  }
+  
+  colnames(markers) <- firstup(colnames(markers))
+  
+  getClustEnrichForRodriguez <- function(clust,signatures,seurat,markers) {
+    clustSig <- lapply(signatures,testHyperSig3,seurat,markers,clust)
+    propCellTypesLearned <- table(seurat@meta.data[which(seurat@meta.data$numclust==clust),"predicted"])/length(seurat@meta.data[which(seurat@meta.data$numclust==clust),"predicted"])
+    clustInfo <- c(clustSig,propCellTypesLearned)
+    return(clustInfo)
+  }
+  
+  clust_list <- lapply(unique(markers$Cluster),getClustEnrichForRodriguez,signature=signaturesRodriguez,seurat =seurat,markers =markers) 
+  
+  names(clust_list) <- paste("cluster_",unique(markers$Cluster),sep="")
+  
+  clust_table <- as.data.frame(matrix(unlist(clust_list), nrow=length(unlist(clust_list[1]))))
+  colnames(clust_table) <- names(clust_list)
+  rownames(clust_table) <- names(clust_list[[1]])
+  
+  clust_df <- as.data.frame(t(clust_table))
+  
+  write.csv(clust_df,file = paste(outdir,"/clustInfoRodriguez.csv",sep =""),quote = F)
+  
+  
+  
+  #Clusters table
+  
+  clust_table <- data.frame()
+  
+  print("begin cluster table")
+  
+  getClustInfo <- function(clust,signatures,seurat,markers) { 
+
+    clustInfo <- list()
+    clustInfo$num_cells <- dim(seurat@meta.data[which(seurat@active.ident==clust),])[1]
+    clustInfo$percent_cells <- clustInfo$num_cells/dim(seurat@meta.data)[1]
+    percentPhases <- table(seurat@meta.data[which(seurat@active.ident==clust),"phases"])/length(seurat@meta.data[which(seurat@active.ident==clust),"phases"]) #In fact this is fraction not percentage
+    
+    if(!is.null(seurat@meta.data$predicted)) {
+      percentPredicted <- table(seurat@meta.data[which(seurat@active.ident==clust),"predicted"])/length(seurat@meta.data[which(seurat@active.ident==clust),"predicted"]) #In fact this is fraction not percentage
+      
+      for (p in unique(seurat@meta.data$predicted)) {
+        print(p)
+        if (is.element(p,names(percentPredicted))) {
+          clustInfo[[p]] <- percentPredicted[p] 
+        } else {
+          clustInfo[[p]] <- 0
+        }
+      }
+      
+    }
+    
+    if(!is.null(seurat@meta.data$AGE)) {
+      percentAGE <- table(seurat@meta.data[which(seurat@active.ident==clust),"AGE"])/length(seurat@meta.data[which(seurat@active.ident==clust),"AGE"]) #In fact this is fraction not percentage
+      
+      for (p in unique(seurat@meta.data$AGE)) {
+        print(p)
+        if (is.element(p,names(percentAGE))) {
+          clustInfo[[p]] <- percentAGE[p] 
+        } else {
+          clustInfo[[p]] <- 0
+        }
+      }
+      
+    }
+    
+    if(!is.null(seurat@meta.data$sampleName)) {
+      percentsampleName <- table(seurat@meta.data[which(seurat@active.ident==clust),"sampleName"])/length(seurat@meta.data[which(seurat@active.ident==clust),"sampleName"]) #In fact this is fraction not percentage
+      
+      for (p in unique(seurat@meta.data$sampleName)) {
+        print(p)
+        if (is.element(p,names(percentsampleName))) {
+          clustInfo[[p]] <- percentsampleName[p] 
+        } else {
+          clustInfo[[p]] <- 0
+        }
+      }
+      
+    }
+    
+    
+    for (p in c("G1_G0","S","G2_M")) {
+      if (is.element(p,names(percentPhases))) {
+        clustInfo[[p]] <- percentPhases[p] 
+      } else {
+        clustInfo[[p]] <- 0
+      }
+    }
+    
+    
+    clustInfo$median_genes_expressed <- median(seurat@meta.data[which(seurat@active.ident==clust),"numGenesPerCells"])
+    clustInfo$median_nUMI <- median(seurat@meta.data[which(seurat@active.ident==clust),"Total_mRNAs"])
+    clustInfo$median_percentMitochGenes <- median(seurat@meta.data[which(seurat@active.ident==clust),"percentMito"])
+    
+    
+    clustSig <- lapply(signatures,testHyperSig3,seurat,markers,clust) 
+    
+    clustInfo <- c(clustInfo,clustSig)
+    
+    
+  }
+  
+  allSignatures <- c(signatures,signaturesRodriguez)
+  
+  clust_list <- lapply(levels(unique(seurat@active.ident)),getClustInfo,allSignatures,seurat,markers) 
+  
+  names(clust_list) <- paste("cluster_",levels(unique(seurat@active.ident)),sep="")
+  
+  print("clust_list ok")
+  saveRDS(clust_list,paste(outdir,"/clust_list_save.rds",sep =""))
+  
+  clust_table <- as.data.frame(matrix(unlist(clust_list), nrow=length(unlist(clust_list[1]))))
+  colnames(clust_table) <- names(clust_list)
+  rownames(clust_table) <- names(clust_list[[1]])
+  
+  print("clust_table ok")
+  
+  clust_df <- as.data.frame(t(clust_table))
+  
+  write.table(x = clust_df,file = paste(outdir,"/clusters_table.tsv",sep =""),sep="\t",quote=F,col.names = NA)
+  
+  return(clust_df)
+}
+
+```
+
+
+
+6. transferFuns.R
+
+```{r}
+
+integrateByConditionOneAtacRnaAll <- function(atac,
+                                              rna0,
+                                              clustCol ="numclust",
+                                              refAssayLabel = "RNA",
+                                              refAssayTransfer = "RNA",
+                                              condCol,
+                                              condition,
+                                              dimsLSI = c(1:30),
+                                              dimsCCA = c(1:30),
+                                              outdir = "./") {
+
+  
+  Idents(rna0) <- condCol
+  rna <- subset(rna0,idents = condition)
+  
+  ##Data preprocessing
+  
+  ## Here, we process the gene activity matrix in order to find anchors between cells in the scATAC-seq dataset and the scRNA-seq dataset.
+  rna$numclust <- rna@meta.data[,clustCol]
+  DefaultAssay(atac) <- "activities"
+  atac <- FindVariableFeatures(atac)
+  atac <- NormalizeData(atac)
+  atac <- ScaleData(atac)
+  
+  transfer.anchors <- FindTransferAnchors(reference = rna, query = atac, features = VariableFeatures(object = rna), 
+                                          reference.assay = refAssayLabel, query.assay = "activities", reduction = "cca")
+  
+  ## To improve discard first integratedLSI ?
+  celltype.predictions <- TransferData(anchorset = transfer.anchors, refdata = rna$numclust, dims = dimsLSI,
+                                       weight.reduction = atac[["lsi"]])
+  atac <- AddMetaData(atac, metadata = celltype.predictions)
+  
+  png(paste0(outdir,"prediction.score.max.png"))
+  hist(atac$prediction.score.max)
+  abline(v = 0.5, col = "red")
+  dev.off()
+  
+  ## We filter atac cells with a weak prediction score for rna cluster transfer
+  atac.filtered <- subset(atac, subset = prediction.score.max > 0.4)
+  atac.filtered$predicted.id <- factor(atac.filtered$predicted.id, levels = levels(rna$numclust))  # to make the colors match
+  
+  p1 <- DimPlot(atac.filtered, group.by = "predicted.id", label = TRUE, repel = TRUE) + ggtitle("scATAC-seq cells") + 
+    NoLegend() + scale_colour_hue(drop = FALSE)
+  p2 <- DimPlot(rna, group.by = "numclust", label = TRUE, repel = TRUE) + ggtitle("scRNA-seq cells") + 
+    NoLegend()
+  
+  png(paste0(outdir,"predictedATACvsRNAclust.png"),units = "in",res = 300,height=6,width =10)
+  grid.arrange(p1,p2,nrow = 1)
+  dev.off()
+  
+  ### Input with all rna data as ref
+  # note that we restrict the imputation to variable genes from scRNA-seq 
+  genes.use <- VariableFeatures(rna0) # all genes of the slot if integrated 
+  refdata <- GetAssayData(rna0, assay = refAssayTransfer, slot = "data")[genes.use, ]
+  
+  # refdata (input) contains a scRNA-seq expression matrix for the scRNA-seq cells.  imputation
+  # (output) will contain an imputed scRNA-seq matrix for each of the ATAC cells
+  transfer.anchors.2 <- FindTransferAnchors(reference = rna0, 
+                                            query = atac.filtered, 
+                                            features = VariableFeatures(object = rna0), 
+                                            reference.assay = refAssayTransfer, 
+                                            query.assay = "activities", 
+                                            reduction = "cca",
+                                            dims = dimsCCA)
+  
+  imputation <- TransferData(anchorset = transfer.anchors.2, 
+                             refdata = refdata, 
+                             weight.reduction = atac.filtered[["lsi"]],
+                             dims = dimsLSI)
+  
+  # this line adds the imputed data matrix to the atac object
+  atac.filtered[[refAssayTransfer]] <- imputation
+  
+  return(atac.filtered)
+}
+
+```
+
+
+
+6. funForSeuratAnalysis.R
+
+```{r}
+# Do hypergeometric test of to population to find if ine proportion is significantly increased
+getEnrichAge <- function(hspc.combined,clustCol ='clusterName',metaCol = "age") {
+  
+  table <- table(hspc.combined@meta.data[,metaCol],hspc.combined@meta.data[,clustCol])
+  
+  #Remove null column in case of reclustering has been made
+  
+  table <- table[,as.vector(which(colSums(table)>0))]
+  
+  tablePercent <- prop.table(table,2)
+  
+  propExpect <- table(hspc.combined@meta.data[,metaCol])/length(hspc.combined@meta.data[,metaCol])
+  propExpectAge_1<- propExpect[[unique(hspc.combined@meta.data[,metaCol])[1]]]
+  propExpectAge_2<- propExpect[[unique(hspc.combined@meta.data[,metaCol])[2]]]
+  phyper <- rep(NA,length(colnames(table)))
+  enrich <- rep(NA,length(colnames(table)))
+  tablePercent <- rbind(tablePercent,enrich,phyper)
+  
+  
+  for (age in unique(hspc.combined@meta.data[,metaCol])) {
+    for (cluster in colnames(table)) {
+      if(tablePercent[age,cluster] > propExpect[[age]]) {
+        cells_pull_marked <- table[age,as.character(cluster)]
+        cells_pull <- as.numeric(colSums(table)[as.character(cluster)])
+        cells_marked_all <- rowSums(table)[age]
+        all_cells <- length(hspc.combined@meta.data[,metaCol])
+        
+        
+        
+        p.value <-  phyper(q=cells_pull_marked -1, 
+                           m=cells_marked_all,
+                           n=all_cells - cells_marked_all, k= cells_pull, lower.tail=FALSE)
+        
+        tablePercent["enrich",cluster] <- age
+        
+        tablePercent["phyper",cluster] <- p.value
+        
+      }
+    }
+  }
+  return(tablePercent)
+  
+}
+
+# Hypergeometric test and plotting the result with a bp function, use a getEnrichAge
+getEnrichPopClust <- function(hspc.combined, Xname, Yname, colorX, colorY, metaCol = "AGE", clustCol = "numclust"){
+  conditionEnrich <- getEnrichAge(hspc.combined = hspc.combined,clustCol = clustCol, metaCol = metaCol)
+  conditionEnrich <- as.data.frame(t(conditionEnrich))
+  conditionEnrich$color <- "black"
+  conditionEnrich[which(as.numeric(as.vector(conditionEnrich$phyper)) < 0.01 & conditionEnrich$enrich == Xname),"color"] <- colorX
+  conditionEnrich[which(as.numeric(as.vector(conditionEnrich$phyper)) < 0.01 & conditionEnrich$enrich == Yname),"color"] <- colorY
+  return(conditionEnrich)
+}
+
+# Function to calculate the score diff of a signature between 2 cells pop
+featureDiff <- function(seurat,cells.1,cells.2,feature) {
+  data <- GetAssayData(seurat,slot = "data")
+  total.diff <- mean(data[feature,cells.1]) - mean(data[feature,cells.2])
+  return(total.diff)
+} 
+
+convertHumanGeneList <- function(x){
+  require("biomaRt")
+  human = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+  mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+  genesV2 = getLDS(attributes = c("hgnc_symbol"), filters = "hgnc_symbol", values = x , mart = human, attributesL = c("mgi_symbol"), martL = mouse, uniqueRows=T)
+  humanx <- unique(genesV2[, 2])
+  # Print the first 6 genes found to the screen
+  print(head(humanx))
+  return(humanx)
+}
+
+```

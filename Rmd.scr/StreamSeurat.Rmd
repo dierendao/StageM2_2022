@@ -1,0 +1,263 @@
+---
+title: "Stream Seurat"
+author: "Babacar NDAO"
+date: "11/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+## -----------------------------------------------------------------------------
+## Libraries
+## -----------------------------------------------------------------------------
+
+suppressMessages(library(Seurat))
+suppressMessages(library(ggplot2))
+suppressMessages(library(scales))
+suppressMessages(library(getopt))
+suppressMessages(library(plyr))
+suppressMessages(library(RColorBrewer))
+
+# Do hypergeometric test of to population to find if ine proportion is significantly increased
+getEnrichAge <- function(hspc.combined,clustCol ='clusterName',metaCol = "age") {
+  
+  table <- table(hspc.combined@meta.data[,metaCol],hspc.combined@meta.data[,clustCol])
+  
+  #Remove null column in case of reclustering has been made
+  
+  table <- table[,as.vector(which(colSums(table)>0))]
+  
+  tablePercent <- prop.table(table,2)
+  
+  propExpect <- table(hspc.combined@meta.data[,metaCol])/length(hspc.combined@meta.data[,metaCol])
+  propExpectAge_1<- propExpect[[unique(hspc.combined@meta.data[,metaCol])[1]]]
+  propExpectAge_2<- propExpect[[unique(hspc.combined@meta.data[,metaCol])[2]]]
+  phyper <- rep(NA,length(colnames(table)))
+  enrich <- rep(NA,length(colnames(table)))
+  tablePercent <- rbind(tablePercent,enrich,phyper)
+  
+  
+  for (age in unique(hspc.combined@meta.data[,metaCol])) {
+    for (cluster in colnames(table)) {
+      if(tablePercent[age,cluster] > propExpect[[age]]) {
+        cells_pull_marked <- table[age,as.character(cluster)]
+        cells_pull <- as.numeric(colSums(table)[as.character(cluster)])
+        cells_marked_all <- rowSums(table)[age]
+        all_cells <- length(hspc.combined@meta.data[,metaCol])
+        
+        
+        
+        p.value <-  phyper(q=cells_pull_marked -1, 
+                           m=cells_marked_all,
+                           n=all_cells - cells_marked_all, k= cells_pull, lower.tail=FALSE)
+        
+        tablePercent["enrich",cluster] <- age
+        
+        tablePercent["phyper",cluster] <- p.value
+        
+      }
+    }
+  }
+  return(tablePercent)
+  
+}
+
+# Hypergeometric test and plotting the result with a bp function, use a getEnrichAge
+getEnrichPopClust <- function(hspc.combined, Xname, Yname, colorX, colorY, metaCol = "AGE", clustCol = "numclust"){
+  conditionEnrich <- getEnrichAge(hspc.combined = hspc.combined,clustCol = clustCol, metaCol = metaCol)
+  conditionEnrich <- as.data.frame(t(conditionEnrich))
+  conditionEnrich$color <- "black"
+  conditionEnrich[which(as.numeric(as.vector(conditionEnrich$phyper)) < 0.01 & conditionEnrich$enrich == Xname),"color"] <- colorX
+  conditionEnrich[which(as.numeric(as.vector(conditionEnrich$phyper)) < 0.01 & conditionEnrich$enrich == Yname),"color"] <- colorY
+  return(conditionEnrich)
+}
+
+
+## -----------------------------------------------------------------------------
+## Command line args
+## -----------------------------------------------------------------------------
+
+spec = matrix(c(
+  'help',        'h', 0, "logical",   "Help about the program",
+  "inputSeurat",  "i",1, "character", "input seurat object with cluster column names numclust",
+  'outdir',     'o',1, "character", 'Outdir path (default ./)',
+  "inputStream", "s", 1, "character", "input stream output in csv format",
+  "colMetaData", "m", 1, "character", "List all the column from inputStream that you want to transfer (sep by +)",
+  "refPseudotime", "r", 1, "character", "Name of the reference pseudotime",
+  "treeShape", "t", 1, "character", "Level of the pseudotime tree, from the root to the leafs (sep by +)"
+), byrow=TRUE, ncol=5);
+
+
+
+opt = getopt(spec)
+
+# if help was asked, print a friendly message
+# and exit with a non-zero error code
+
+args <- commandArgs()
+if ( !is.null(opt$help) | is.null(opt$inputSeurat)) {
+  cat("Create influence graph from regulon table")
+  cat(getopt(spec, usage=TRUE))
+  q(status=1)
+}
+
+## ---------------------------------------------------------------------
+## Read inputs
+## ---------------------------------------------------------------------
+
+opt$inputSeurat <- "/shared/projects/scrna_gmp_rara/stage_babacar/scranseq/analysis/output/RNA/IntegrationAnalysis/seurat_annotated.rds"
+opt$inputStream <- "/shared/projects/scrna_gmp_rara/stage_babacar/scranseq/analysis/output/RNA/streamAnalysis/stream_metadata.csv"
+opt$outdir <- "/shared/projects/scrna_gmp_rara/stage_babacar/scranseq/analysis/output/RNA/streamAnalysisSeurat/"
+opt$colMetaData <- "branch_id_alias+S0_pseudotime+S1_pseudotime+S2_pseudotime+S3_pseudotime"
+opt$refPseudotime <- "S3_pseudotime"
+opt$treeShape <- "(S3, S1)+(S0, S1)+(S2, S1)"
+
+print(opt$colMetaData)
+print(opt$refPseudotime)
+print(opt$treeShape)
+
+# Read seurat object
+seurat <- readRDS(opt$inputSeurat)
+
+stream <- read.table(opt$inputStream, header = T, sep = ",", row.names = 1)
+
+pseudotimeMetadata <- strsplit(opt$colMetaData, split = "\\+")[[1]]
+
+treeShape <- strsplit(opt$treeShape, split = "\\+")[[1]]
+
+outdir <- opt$outdir
+
+print(treeShape)
+
+# Define colors
+colorTreatment <- c("#664CFF", "#FF8000")
+colorCluster <- c("#E69F00", "#CC79A7", "#0072B2", "#009E73", "#D55E00", "#56B4E9", "#FF0000")
+colorPhases <- c(brewer.pal(9,"RdPu"))[c(3,6,9)]
+colorBranches <- c("#332288", "#117733", "#DDCC77")
+
+#----------------------------------------------------#
+#  Prepare the seurat object for pseudotime analysis
+#----------------------------------------------------#
+
+#dir.create(outdir, recursive = T)
+
+DefaultAssay(seurat) <- "RNA"
+
+# Add all the metadata from stream output to seurat
+seurat@meta.data[,pseudotimeMetadata] <- stream[rownames(seurat@meta.data), pseudotimeMetadata]
+
+# Setup default pseudotime and make it 100 bigger
+seurat$Pseudotime <- seurat@meta.data[,opt$refPseudotime]
+seurat$Pseudotime_100 <- seurat@meta.data$Pseudotime*100
+
+# Rename branch to easier name
+seurat@meta.data$branch_id_alias <- gsub(pattern = "'", replacement = "", x = seurat@meta.data$branch_id_alias)
+seurat@meta.data$branch_id_alias <- factor(seurat@meta.data$branch_id_alias, levels = treeShape)
+
+print("Rename trajectory name")
+Idents(seurat) <- "branch_id_alias"
+new.traj.name <- LETTERS[1:length(treeShape)]
+
+names(new.traj.name) <- levels(seurat)
+
+seurat <- RenameIdents(seurat, new.traj.name)
+seurat@meta.data$BranchName <- Idents(seurat)
+
+print("Renaming done")
+Idents(seurat) <- "FinalCluster"
+
+# seurat@meta.data$FinalBranch <- FALSE
+# seurat@meta.data[which(seurat@meta.data$BranchName %in% c("D", "E", "B")), "FinalBranch"] <- TRUE
+
+#----------------------------------------------------#
+#  Pseudotime ploting
+#----------------------------------------------------#
+
+
+rescale_pseudotime <- rescale(seurat@meta.data[order(seurat$Pseudotime_100, decreasing = F), "Pseudotime_100"], to = c(0,1))
+UMAP_pseudotime_rescale <- FeaturePlot(seurat, features = "Pseudotime_100", pt.size = 0.4) + scale_color_viridis_c(option = "C", values = rescale_pseudotime)
+
+UMAP_branchName <- DimPlot(seurat, group.by = "BranchName", cols = colorBranches, pt.size = 0.4)
+
+ggsave(paste0(outdir, 'UMAP_Branches', '.png'), plot = UMAP_branchName, device = 'png', path = NULL, 
+       scale = 1, width = 20, height = 20, units = 'cm', dpi = 300)
+
+ggsave(paste0(outdir, 'UMAP_Pseudotime_rescale', '.png'), plot = UMAP_pseudotime_rescale, device = 'png', path = NULL, 
+       scale = 1, width = 20, height = 20, units = 'cm', dpi = 300)
+
+summary_branch_clust <- ddply(seurat@meta.data,~FinalCluster + BranchName + sampleName + phases, nrow)
+summary_branch_clust$sampleName <- factor(summary_branch_clust$sampleName, levels = c("RNA_RA", "RNA_Ctrl"))
+
+propExpect <- table(seurat@meta.data$sampleName)/length(seurat@meta.data$sampleName)[]
+
+enrich_branch <- getEnrichPopClust(hspc.combined = seurat, Xname = "RNA_Ctrl", Yname = "RNA_RA", colorX = colorTreatment[1],
+                                   colorY = colorTreatment[2], metaCol = "sampleName", clustCol = "BranchName")
+
+bp_treatmentBranch <- ggplot(data.frame(summary_branch_clust), aes(fill = sampleName,y = V1, x=BranchName)) +
+  geom_bar( stat="identity", position="fill")+
+  scale_fill_manual( values= rev(colorTreatment))+
+  scale_y_continuous(name = "Sample (%)", labels = c(0,25,50,75,100))+
+  ylab(label = "")+xlab(label = "") + coord_flip()+ 
+  theme(legend.title=element_blank(), axis.text.y = element_text(colour = enrich_branch[,"color"])) +
+  geom_hline(yintercept = propExpect["RNA_Ctrl"])
+
+
+bp_branchState <- ggplot(data.frame(summary_branch_clust), aes(fill = BranchName,y = V1, x=FinalCluster)) +
+  geom_bar( stat="identity", position="fill")+ 
+  #geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual( values= colorBranches)+
+  scale_y_continuous(name = "Sample (%)", labels = c(0,25,50,75,100))+
+  ylab(label = "")+xlab(label = "") + coord_flip()+
+  theme(legend.title=element_blank())
+
+bp_stateBranch <- ggplot(data.frame(summary_branch_clust), aes(fill = FinalCluster,y = V1, x=BranchName)) +
+  geom_bar( stat="identity", position="fill")+
+  scale_fill_manual( values= colorCluster)+
+  scale_y_continuous(name = "Sample (%)", labels = c(0,25,50,75,100))+
+  ylab(label = "")+xlab(label = "") + coord_flip()+
+  theme(legend.title=element_blank())
+
+bp_cellCycleBranch <- ggplot(data.frame(summary_branch_clust), aes(fill = phases,y = V1, x=BranchName)) +
+  geom_bar( stat="identity", position="fill")+
+  scale_fill_manual( values= colorPhases)+
+  scale_y_continuous(name = "Sample (%)", labels = c(0,25,50,75,100))+
+  ylab(label = "")+xlab(label = "") + coord_flip()+
+  theme(legend.title=element_blank())
+
+ggsave(paste0(outdir, 'BP_treatmentPerBranch', '.png'), plot = bp_treatmentBranch, device = 'png', path = NULL, 
+       scale = 1, width = 10, height = 10, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, 'BP_branchPerCluster', '.png'), plot = bp_branchState, device = 'png', path = NULL, 
+       scale = 1, width = 10, height = 10, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, 'BP_clusterPerBranch', '.png'), plot = bp_stateBranch, device = 'png', path = NULL, 
+       scale = 1, width = 10, height = 10, units = 'cm', dpi = 300)
+ggsave(paste0(outdir, 'BP_cellCyclePerBranch', '.png'), plot = bp_cellCycleBranch, device = 'png', path = NULL, 
+       scale = 1, width = 10, height = 10, units = 'cm', dpi = 300)
+
+saveRDS(seurat, paste0(outdir, "seuratPseudotime.rds"))
+
+
+## Branches distribution per cluster
+
+s=group_by(summary_branch_clust, FinalCluster, BranchName)
+#100*(sum(s[s$BranchName == "A", ]$V1)/sum(s$V1))
+
+s1=filter(s, FinalCluster == "Cl1")
+#100*(sum(s1[s1$BranchName == "A", ]$V1)/sum(s1$V1))
+
+s2=filter(s, FinalCluster == "Cl2")
+#100*(sum(s1[s1$BranchName == "A", ]$V1)/sum(s1$V1))
+
+
+##Clusters distribution per branche
+
+s=group_by(summary_branch_clust, FinalCluster, BranchName)
+#100*(sum(s[s$BranchName == "A", ]$V1)/sum(s$V1))
+
+sA=filter(s, BranchName == "A")
+#100*(sum(sA[sA$FinalCluster == "Cl1", ]$V1)/sum(sA$V1))
+
+```
+

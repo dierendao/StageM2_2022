@@ -1,7 +1,7 @@
 ---
-title: "transfer Old cluster(without PLZF-RARA-hcG) To New cluster(with PLZF-RARA-hcG)"
+title: "Label Transfer:transfer Old data (without PLZF-RARA-hcG) To New data (with PLZF-RARA-hcG)"
 author: "Babacar NDAO"
-date: "18/03/2022"
+date: "21/03/2022"
 output: html_document
 ---
 
@@ -122,7 +122,10 @@ Idents(rna_new) = "predicted.id"
 
 # add Treatment_clust as metadata
 rna_new$Treatment_clust = paste(rna_new$predicted.id, rna_new$sampleName, sep = "_")
-rna_new$Treatment_clust = factor(rna_new$Treatment_clust, levels = c("Rep_RNA_Ctrl", "Rep_RNA_RA", "Neu1_RNA_Ctrl", "Neu1_RNA_RA", "Neu2_RNA_Ctrl", "Neu2_RNA_RA", "Neu3_RNA_Ctrl", "Neu3_RNA_RA", "NeuRA1_RNA_Ctrl", "NeuRA1_RNA_RA", "NeuRA2_RNA_Ctrl", "NeuRA2_RNA_RA")) 
+rna_new$Treatment_clust = factor(rna_new$Treatment_clust, levels = c("Rep_RNA_Ctrl", "Rep_RNA_RA", "Neu1_RNA_Ctrl", 
+                                                                     "Neu1_RNA_RA", "Neu2_RNA_Ctrl", "Neu2_RNA_RA", "
+                                                                     Neu3_RNA_Ctrl", "Neu3_RNA_RA", "NeuRA1_RNA_Ctrl", 
+                                                                     "NeuRA1_RNA_RA", "NeuRA2_RNA_Ctrl", "NeuRA2_RNA_RA")) 
 
 ```
 
@@ -191,9 +194,9 @@ p2 = ggplot(data = NbCellsPerClusterOldvsNew, aes(x = Cluster, y = New)) +
   ylab("") + xlab("Cluster") 
   
 
-#png(paste(outdir,"/CellsFreqPerCluster.png", sep = "") ,res = 300,height=6,width =10,units = "in") # 
+png(paste(outdir,"/CellsFreqPerCluster.png", sep = "") ,res = 300,height=6,width =10,units = "in") # 
 grid.arrange(p1, p2, nrow = 2)
-#dev.off()
+dev.off()
 
 ```
 
@@ -315,11 +318,26 @@ PLZF_RARA_hcG_statsPerClust
 #write.table(PLZF_RARA_hcG_statsPerClust, file = paste0(outdir, "PLZF_RARA_hcG_statsPerClust.tsv"), sep = "\t", row.names = F, col.names = T, quote = F)
 
 
+
 #PLZF-RARA-hcG expression per cluster per treatment 
 Idents(rna_new) = "Treatment_clust"
 PLZF_RARA_hcG_statsPerClustPerSample = FindAllMarkers(rna_new, features = "PLZF-RARA-hcG", logfc.threshold = 0.0)
 PLZF_RARA_hcG_statsPerClustPerSample
 #write.table(PLZF_RARA_hcG_statsPerClustPerSample, file = paste0(outdir, "PLZF_RARA_hcG_statsPerClustPerSample.tsv"), sep = "\t", row.names = F, col.names = T, quote = F)
+
+## Statistics per cluster per treatment
+Idents(rna_new) = "Treatment_clust"
+for (cluster in levels(rna_new@meta.data$predicted.id)) {
+  list_data[[cluster]] = FindMarkers(rna_new, features = "PLZF-RARA-hcG", ident.1 = paste(cluster, "RNA_Ctrl", sep = "_"), ident.2 = paste(cluster, "RNA_RA", sep = "_"), 
+                                     logfc.threshold = 0.0, min.pct = 0.0, verbose = FALSE)
+  list_data[[cluster]]$cluster = cluster
+}
+
+list_to_df = do.call("rbind", list_data)
+
+write.table(x = list_to_df, file = paste0(outdir, "MarkersCtrlVsTreated_table.tsv"), quote = FALSE)
+
+
 
 # PLZF-RARA-hcG expression per cluster on CT
 Idents(rna_new_CT) = "Treatment_clust"
@@ -330,8 +348,53 @@ PLZF_RARA_hcG_CT_stats
 ```
 
 
+## verification of the statistics associated with the violonplot
+```{r}
+# compare mean expression of hcG-PLZF-RARA per cluster per treatment
+
+p1 = VlnPlot(rna_new, feature = "PLZF-RARA-hcG", pt.size = 0, group.by = "predicted.id", split.by = "sampleName", 
+             cols = rep(colorTreatment)) 
+# Add pairwise comparisons p-value
+p1 = p1 + stat_compare_means(method = "wilcox.test", label = "p.signif", hide.ns = TRUE)
+
+
+png(paste(outdir,"/hcG-PLZF-RARA_MeanComparisonPerClusterPerTreatment.png", sep = "")) # 
+grid.arrange(p1)
+dev.off()
+
+# compare mean expression of hcG-PLZF-RARA per treatment
+
+my_comparisons <- list(c("RNA_Ctrl", "RNA_RA"))
+p2 = VlnPlot(rna_new, feature = "PLZF-RARA-hcG", pt.size = 0, group.by = "sampleName", 
+             cols = rep(colorTreatment)) + NoLegend()
+p2 = p2 + stat_compare_means(comparisons = my_comparisons, method = "wilcox.test", 
+                             label = "p.signif") 
+
+png(paste(outdir,"/hcG-PLZF-RARA_MeanComparisonPerTreatment.png", sep = "") ,res = 300,height=6,width =10,units = "in") # 
+grid.arrange(p2)
+dev.off()
+
+
+# compare mean expression of hcG-PLZF-RARA per cluster
+
+#my_comparisons <- list(c("Rep", "Neu1", "Neu2", "Neu3", "NeuRA1", "NeuRA2"))
+p3 = VlnPlot(rna_new, feature = "PLZF-RARA-hcG", pt.size = 0, group.by = "predicted.id", cols = rep(colorCluster)) 
+p3 = p3 + stat_compare_means(method = "wilcox.test", label = "p.signif", hide.ns = TRUE)
+
+png(paste(outdir,"/hcG-PLZF-RARA_MeanComparisonPerCluster.png", sep = "") ,res = 300,height=6,width =10,units = "in") # 
+grid.arrange(p3)
+dev.off()
+
+# save plots
+png(paste(outdir,"/hcG-PLZF-RARA_MeanComparison.png", sep = "") ,res = 300,height=6,width =15,units = "in") # 
+grid.arrange(p2, p3,p1, nrow = 1)
+dev.off()
+```
+
+
+
 ## saveRDS(rna_new, paste0(opt$outdir, "/atac_integrated.rds"))
 ```{r}
-#saveRDS(rna_new, paste0(outdir,"/rna_new.rds"))
+saveRDS(rna_new, paste0(outdir,"/rna_new.rds"))
 ```
 

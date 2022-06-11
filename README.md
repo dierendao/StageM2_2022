@@ -9,6 +9,9 @@ Contains the scripts that allowed me to create a new reference (mouse genome + t
 - Gene_counting
 Contains the scripts for counting the genes after alignment on the new reference
 
+- Integration_scp
+ bash script to run the IntegrateCT-AR.R on cluster. Indeed this script takes too much time if it is launched from R studio of the ifb.
+ 
 - Rmd_scripts
 Contains the set of Rmd scripts that groups my R scripts and they are sorted in the following order:
 IntegrateCT-AR.Rmd : All steps from the loading of data from scRNA-Seq, through quality control and normalization, to the integration of untreated (CT) and retinoic acid (RA) treated cells
